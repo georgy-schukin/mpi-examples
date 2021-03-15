@@ -123,12 +123,12 @@ void updateVelocitiesCell(Cell &cell, double delta_t) {
 }
 
 void calcForcesBlock(CellBlock &block, const MDParams &md_params, const NeighborIndices &neigh_indices) {
-    block.forEachCellInd([&block, &md_params, &neigh_indices](Cell &cell, const ddl::ArrayIndex<3> &index) {
+    block.forEachCellInd([&block, &md_params, &neigh_indices](Cell &cell, const Index3 &index) {
         initForcesCell(cell);
         addForcesCell(cell, md_params);
         for (const auto &ni: neigh_indices.getNeighborIndices(cell.getNeighborIndicesType())) {
-            ddl::ArrayIndex<3> neigh_index {index[0] + ni[0], index[1] + ni[1], index[2] + ni[2]};
-            addForcesCell(cell, block.getCell(neigh_index), md_params);
+            Index3 neigh_index {index[0] + ni[0], index[1] + ni[1], index[2] + ni[2]};
+            addForcesCell(cell, block.cellAt(neigh_index), md_params);
         }
     });
 }

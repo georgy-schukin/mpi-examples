@@ -1,6 +1,8 @@
 #pragma once
 
 #include "cell.h"
+#include "cell_slice_2d.h"
+#include "index.h"
 
 #include <vector>
 
@@ -39,16 +41,18 @@ public:
     Cell& cellAt(int x, int y, int z);
     const Cell& cellAt(int x, int y, int z) const;
 
-    //CellArray2 getSlice(int dimension, int x, int y, int z, int n1, int n2);
+    Cell& cellAt(const Index3 &index);
+    const Cell& cellAt(const Index3 &index) const;
 
-    //void setSlice(int dimension, int x, int y, int z, const CellArray2 &slice);
-    //void setSlice(int dimension, int x, int y, int z, CellArray2 &&slice);
+    int cellIndex(int x, int y, int z) const;
 
-    //void setSliceShadow(int dimension, int x, int y, int z, const CellArray2 &slice);
-    //void setSliceShadow(int dimension, int x, int y, int z, CellArray2 &&slice);
+    CellSlice2D getSlice(int dimension, int x, int y, int z, int n1, int n2);
+
+    void setSlice(int dimension, int x, int y, int z, const CellSlice2D &slice);
+    void setSliceShadow(int dimension, int x, int y, int z, const CellSlice2D &slice);
 
     std::vector<Particle> extractAndMoveOutParticles(const MeshParams &mesh_params);
-    void addParticles(const std::vector<Particle> &particles, const MeshParams &mesh_params);    
+    void addParticles(const std::vector<Particle> &particles, const MeshParams &mesh_params);
 
     template <typename Proc, typename... Args>
     void forEachCell(Proc proc, Args... args) {
@@ -104,7 +108,7 @@ public:
         forEachCell([proc, args...](const Cell &cell) {
             cell.forEachParticle(proc, args...);
         });
-    }    
+    }
 
     int getNumOfParticles() const;
 

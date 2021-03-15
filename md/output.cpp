@@ -1,4 +1,6 @@
 #include "output.h"
+#include "cell_block.h"
+#include "md.h"
 
 #include <fstream>
 
@@ -22,45 +24,35 @@ std::string baseName(const std::string &filename) {
     return base_name;
 }
 
-void outputVTKPiece(const std::string &path, int iter, int this_node, const Mesh3D &mesh) {
+void outputVTKPiece(const std::string &path, int iter, int this_node, const CellBlock &block) {
     const auto filename = pieceSource(path, iter, this_node);
     std::ofstream out(filename.c_str());
     out << "<?xml version=\"1.0\"?>\n";
     out << "<VTKFile type=\"PolyData\" version=\"1.0\" byte_order=\"LittleEndian\" header_type=\"UInt64\">\n";
     out << "<PolyData>\n";
-    int num_of_particles = 0;
-    const auto contents = mesh.localContents();
-    for (auto &p: contents) {
-        num_of_particles += p.second->getNumOfParticles();
-    }
+    int num_of_particles = block.getNumOfParticles();
     out << "<Piece NumberOfPoints=\"" << num_of_particles << "\" " <<
            "NumberOfVerts=\"" << num_of_particles << "\" " <<
            "NumberOfLines=\"0\" NumberOfStrips=\"0\" NumberOfPolys=\"0\">\n";
 
     out << "<Points>\n";
     out << "<DataArray type=\"Float64\" NumberOfComponents=\"3\" name=\"Position\" format=\"ascii\">\n";
-    for (auto &p: contents) {
-        p.second->forEachParticle([&out](const Particle &particle) {
-            out << particle.pos.x << " " << particle.pos.y << " " << particle.pos.z << " ";
-        });
-    }
+    block.forEachParticle([&out](const Particle &particle) {
+        out << particle.pos.x << " " << particle.pos.y << " " << particle.pos.z << " ";
+    });
     out << "\n</DataArray>\n";
     out << "</Points>\n";
 
     out << "<PointData Scalars=\"Mass\" Vectors=\"Velocity\">\n";
     out << "<DataArray type=\"Float64\" NumberOfComponents=\"1\" Name=\"Mass\" format=\"ascii\">\n";
-    for (auto &p: contents) {
-        p.second->forEachParticle([&out](const Particle &particle) {
-            out << particle.mass << " ";
-        });
-    }
+    block.forEachParticle([&out](const Particle &particle) {
+        out << particle.mass << " ";
+    });
     out << "\n</DataArray>\n";
     out << "<DataArray type=\"Float64\" NumberOfComponents=\"3\" Name=\"Velocity\" format=\"ascii\">\n";
-    for (auto &p: contents) {
-        p.second->forEachParticle([&out](const Particle &particle) {
-            out << particle.velocity.x << " " << particle.velocity.y << " " << particle.velocity.z << " ";
-        });
-    }
+    block.forEachParticle([&out](const Particle &particle) {
+        out << particle.velocity.x << " " << particle.velocity.y << " " << particle.velocity.z << " ";
+    });
     out << "\n</DataArray>\n";
     out << "</PointData>\n";
 
@@ -103,23 +95,8 @@ void outputVTKParallel(const std::string &path, int iter, int num_of_nodes) {
     out << "</VTKFile>\n";
 }
 
-void outputVTKSeries(const std::string &path, int num_of_iters, const MDParams &md_params) {
-    const auto filename = path + ".vtp.series";
-    std::ofstream out(filename.c_str());
-    out << "{\n\"file-series-version\" : \"1.0\", \n\"files\" : [\n";
-    for (int iter = 0; iter < num_of_iters; iter++) {
-        out << "{\"name\" : \"" << baseName(parallelSource(path, iter)) << "\", " <<
-               "\"time\" : " << iter * md_params.delta_t << "}";
-        if (iter < num_of_iters - 1) {
-            out << ",";
-        }
-        out << "\n";
-    }
-    out << "]\n}\n";
-}
-
-void outputVTKNode(const std::string &path, int iter, int this_node, int num_of_nodes, const Mesh3D &mesh) {
-    outputVTKPiece(path, iter, this_node, mesh);
+void outputVTKNode(const std::string &path, int iter, int this_node, int num_of_nodes, const CellBlock &block) {
+    outputVTKPiece(path, iter, this_node, block);
     if (this_node == 0) {
         outputVTKParallel(path, iter, num_of_nodes);
     }

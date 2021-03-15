@@ -8,85 +8,55 @@
 #include <stdexcept>
 #include <sstream>
 
-using Range2D = ddl::IndexRangeND<2>;
-using Range3D = ddl::IndexRangeND<3>;
-
 namespace {
-    Cell& cellAt(CellBlock::CellArray3 &cells, int x, int y, int z) {
-        if (x < 0 || x >= static_cast<int>(cells.size(0)) ||
-            y < 0 || y >= static_cast<int>(cells.size(1)) ||
-            z < 0 || z >= static_cast<int>(cells.size(2))) {
-            throw std::runtime_error("Access to non-existing cell (" + std::to_string(x) + ", " + std::to_string(y) + ", " + std::to_string(z) + ")");
-        }
-        return cells(x, y, z);
+    template <size_t Dim, bool AddShadow>
+    Cell& getCell(CellBlock &block, const CellBlockParams &params, int fixed, int i1, int i2);
+
+    template <>
+    Cell& getCell<0, true>(CellBlock &block, const CellBlockParams &params, int fixed, int i1, int i2) {
+        return block.cellAt(fixed + params.shadow_start[0], i1 + params.shadow_start[1], i2 + params.shadow_start[2]);
+    }
+
+    template <>
+    Cell& getCell<1, true>(CellBlock &block, const CellBlockParams &params, int fixed, int i1, int i2) {
+        return block.cellAt(i1 + params.shadow_start[0], fixed + params.shadow_start[1], i2 + params.shadow_start[2]);
+    }
+
+    template <>
+    Cell& getCell<2, true>(CellBlock &block, const CellBlockParams &params, int fixed, int i1, int i2) {
+        return block.cellAt(i1 + params.shadow_start[0], i2 + params.shadow_start[1], fixed + params.shadow_start[2]);
+    }
+
+    template <>
+    Cell& getCell<0, false>(CellBlock &block, const CellBlockParams&, int fixed, int i1, int i2) {
+        return block.cellAt(fixed, i1, i2);
+    }
+
+    template <>
+    Cell& getCell<1, false>(CellBlock &block, const CellBlockParams&, int fixed, int i1, int i2) {
+        return block.cellAt(i1, fixed, i2);
+    }
+
+    template <>
+    Cell& getCell<2, false>(CellBlock &block, const CellBlockParams&, int fixed, int i1, int i2) {
+        return block.cellAt(i1, i2, fixed);
     }
 
     template <size_t Dim, bool AddShadow>
-    Cell& getCell(CellBlock::CellArray3 &cells, const CellBlockParams &params, int fixed, int i1, int i2);
-
-    template <>
-    Cell& getCell<0, true>(CellBlock::CellArray3 &cells, const CellBlockParams &params, int fixed, int i1, int i2) {
-        return cellAt(cells, fixed + params.shadow_start[0], i1 + params.shadow_start[1], i2 + params.shadow_start[2]);
-    }
-
-    template <>
-    Cell& getCell<1, true>(CellBlock::CellArray3 &cells, const CellBlockParams &params, int fixed, int i1, int i2) {
-        return cellAt(cells, i1 + params.shadow_start[0], fixed + params.shadow_start[1], i2 + params.shadow_start[2]);
-    }
-
-    template <>
-    Cell& getCell<2, true>(CellBlock::CellArray3 &cells, const CellBlockParams &params, int fixed, int i1, int i2) {
-        return cellAt(cells, i1 + params.shadow_start[0], i2 + params.shadow_start[1], fixed + params.shadow_start[2]);
-    }
-
-    template <>
-    Cell& getCell<0, false>(CellBlock::CellArray3 &cells, const CellBlockParams&, int fixed, int i1, int i2) {
-        return cellAt(cells, fixed, i1, i2);
-    }
-
-    template <>
-    Cell& getCell<1, false>(CellBlock::CellArray3 &cells, const CellBlockParams&, int fixed, int i1, int i2) {
-        return cellAt(cells, i1, fixed, i2);
-    }
-
-    template <>
-    Cell& getCell<2, false>(CellBlock::CellArray3 &cells, const CellBlockParams&, int fixed, int i1, int i2) {
-        return cellAt(cells, i1, i2, fixed);
+    CellSlice2D getSlice(CellBlock &block, int fixed, int s1, int s2, int n1, int n2) {
+        CellSlice2D slice(n1, n2);
+        for (int i1 = 0; i1 < n1; i1++)
+        for (int i2 = 0; i2 < n2; i2++) {
+            slice.cellAt(i1, i2) = getCell<Dim, AddShadow>(block, block.getParams(), fixed, s1 + i1, s2 + i2);
+        }
+        return slice;
     }
 
     template <size_t Dim, bool AddShadow>
-    CellBlock::CellArray2 getSlice(CellBlock &block, int fixed, int s1, int s2, int n1, int n2) {
-        try {
-            CellBlock::CellArray2 slice(Range2D {static_cast<size_t>(n1), static_cast<size_t>(n2)});
-            for (int i1 = 0; i1 < n1; i1++)
-            for (int i2 = 0; i2 < n2; i2++) {
-                slice(i1, i2) = getCell<Dim, AddShadow>(block.getCells(), block.getParams(), fixed, s1 + i1, s2 + i2);
-            }
-            return slice;
-        }
-        catch (std::bad_alloc&) {
-            std::ostringstream out;
-            const auto &cells = block.getCells();
-            out << "Failed to alloc slice " << n1 << "x" << n2 <<
-                   " from block " << cells.size(0) << "x" << cells.size(1) << "x" << cells.size(2) <<
-                   " with " << block.getNumOfParticles() << " particles";
-            throw std::runtime_error(out.str());
-        }
-    }
-
-    template <size_t Dim, bool AddShadow>
-    void setSlice(CellBlock &block, int fixed, int s1, int s2, const CellBlock::CellArray2 &slice) {
-        for (int i1 = 0; i1 < static_cast<int>(slice.size(0)); i1++)
-        for (int i2 = 0; i2 < static_cast<int>(slice.size(1)); i2++) {
-             getCell<Dim, AddShadow>(block.getCells(), block.getParams(), fixed, s1 + i1, s2 + i2) = slice(i1, i2);
-        }
-    }
-
-    template <size_t Dim, bool AddShadow>
-    void setSlice(CellBlock &block, int fixed, int s1, int s2, CellBlock::CellArray2 &&slice) {
-        for (int i1 = 0; i1 < static_cast<int>(slice.size(0)); i1++)
-        for (int i2 = 0; i2 < static_cast<int>(slice.size(1)); i2++) {
-             getCell<Dim, AddShadow>(block.getCells(), block.getParams(), fixed, s1 + i1, s2 + i2) = std::move(slice(i1, i2));
+    void setSlice(CellBlock &block, int fixed, int s1, int s2, const CellSlice2D &slice) {
+        for (int i1 = 0; i1 < slice.sizeX(); i1++)
+        for (int i2 = 0; i2 < slice.sizeY(); i2++) {
+             getCell<Dim, AddShadow>(block, block.getParams(), fixed, s1 + i1, s2 + i2) = slice.cellAt(i1, i2);
         }
     }
 }
@@ -102,19 +72,14 @@ void CellBlock::setParams(const CellBlockParams &params) {
 }
 
 void CellBlock::initCells() {
-    cells = CellArray3(Range3D {static_cast<size_t>(params.full_size[0]),
-                                static_cast<size_t>(params.full_size[1]),
-                                static_cast<size_t>(params.full_size[2])});
-    forEachCellInd([this](Cell &cell, const ddl::ArrayIndex<3> &index) {
-        Index3 ind {static_cast<int>(index[0]),
-                    static_cast<int>(index[1]),
-                    static_cast<int>(index[2])};
-        cell.setIndex(Index3 {params.shift[0] + ind[0] - params.shadow_start[0],
-                              params.shift[1] + ind[1] - params.shadow_start[1],
-                              params.shift[2] + ind[2] - params.shadow_start[2]});
-        const auto neigh_type = NeighborIndices::getType(ind[0] > 0, ind[0] < params.full_size[0] - 1,
-                                                         ind[1] > 0, ind[1] < params.full_size[1] - 1,
-                                                         ind[2] > 0, ind[2] < params.full_size[2] - 1);
+    cells.resize(static_cast<size_t>(params.full_size[0] * params.full_size[1] * params.full_size[2]));
+    forEachCellInd([this](Cell &cell, const Index3 &index) {
+        cell.setIndex(Index3 {params.shift[0] + index[0] - params.shadow_start[0],
+                              params.shift[1] + index[1] - params.shadow_start[1],
+                              params.shift[2] + index[2] - params.shadow_start[2]});
+        const auto neigh_type = NeighborIndices::getType(index[0] > 0, index[0] < params.full_size[0] - 1,
+                                                         index[1] > 0, index[1] < params.full_size[1] - 1,
+                                                         index[2] > 0, index[2] < params.full_size[2] - 1);
         cell.setNeighborIndicesType(neigh_type);
     });
 }
@@ -128,7 +93,27 @@ Extent3 CellBlock::getExtent(const MeshParams &m_params) const {
     return extent;
 }
 
-CellBlock::CellArray2 CellBlock::getSlice(int dimension, int x, int y, int z, int n1, int n2) {
+Cell& CellBlock::cellAt(int x, int y, int z) {
+    return cells[static_cast<size_t>(cellIndex(x, y, z))];
+}
+
+const Cell& CellBlock::cellAt(int x, int y, int z) const {
+    return cells[static_cast<size_t>(cellIndex(x, y, z))];
+}
+
+Cell& CellBlock::cellAt(const Index3 &index) {
+    return cellAt(index[0], index[1], index[2]);
+}
+
+const Cell& CellBlock::cellAt(const Index3 &index) const {
+    return cellAt(index[0], index[1], index[2]);
+}
+
+int CellBlock::cellIndex(int x, int y, int z) const {
+    return x * params.full_size[1] * params.full_size[2] + y * params.full_size[2] + z;
+}
+
+CellSlice2D CellBlock::getSlice(int dimension, int x, int y, int z, int n1, int n2) {
     x = toIndex(x, 0);
     y = toIndex(y, 1);
     z = toIndex(z, 2);
@@ -137,10 +122,10 @@ CellBlock::CellArray2 CellBlock::getSlice(int dimension, int x, int y, int z, in
         case 1: return ::getSlice<1, true>(*this, y, x, z, n1, n2);
         case 2: return ::getSlice<2, true>(*this, z, x, y, n1, n2);
     }
-    return CellArray2();
+    return CellSlice2D();
 }
 
-void CellBlock::setSlice(int dimension, int x, int y, int z, const CellArray2 &slice) {
+void CellBlock::setSlice(int dimension, int x, int y, int z, const CellSlice2D &slice) {
     x = toIndex(x, 0);
     y = toIndex(y, 1);
     z = toIndex(z, 2);
@@ -151,18 +136,7 @@ void CellBlock::setSlice(int dimension, int x, int y, int z, const CellArray2 &s
     }
 }
 
-void CellBlock::setSlice(int dimension, int x, int y, int z, CellArray2 &&slice) {
-    x = toIndex(x, 0);
-    y = toIndex(y, 1);
-    z = toIndex(z, 2);
-    switch (dimension) {
-        case 0: return ::setSlice<0, true>(*this, x, y, z, std::move(slice));
-        case 1: return ::setSlice<1, true>(*this, y, x, z, std::move(slice));
-        case 2: return ::setSlice<2, true>(*this, z, x, y, std::move(slice));
-    }
-}
-
-void CellBlock::setSliceShadow(int dimension, int x, int y, int z, const CellArray2 &slice) {
+void CellBlock::setSliceShadow(int dimension, int x, int y, int z, const CellSlice2D &slice) {
     x = toIndexFull(x, 0);
     y = toIndexFull(y, 1);
     z = toIndexFull(z, 2);
@@ -170,17 +144,6 @@ void CellBlock::setSliceShadow(int dimension, int x, int y, int z, const CellArr
         case 0: return ::setSlice<0, false>(*this, x, y, z, slice);
         case 1: return ::setSlice<1, false>(*this, y, x, z, slice);
         case 2: return ::setSlice<2, false>(*this, z, x, y, slice);
-    }
-}
-
-void CellBlock::setSliceShadow(int dimension, int x, int y, int z, CellArray2 &&slice) {
-    x = toIndexFull(x, 0);
-    y = toIndexFull(y, 1);
-    z = toIndexFull(z, 2);
-    switch (dimension) {
-        case 0: return ::setSlice<0, false>(*this, x, y, z, std::move(slice));
-        case 1: return ::setSlice<1, false>(*this, y, x, z, std::move(slice));
-        case 2: return ::setSlice<2, false>(*this, z, x, y, std::move(slice));
     }
 }
 
@@ -203,7 +166,7 @@ std::vector<Particle> CellBlock::extractAndMoveOutParticles(const MeshParams &me
 }
 
 void CellBlock::addParticles(const std::vector<Particle> &particles, const MeshParams &mesh_params) {
-    std::map<ddl::ArrayIndex<3>, std::vector<Particle>> in_particles;
+    std::map<Index3, std::vector<Particle>> in_particles;
     const auto extent = getExtent(mesh_params);
     for (const auto &particle: particles) {
         const auto ix = int((particle.pos.x - extent.start(0)) / mesh_params.step[0]);
@@ -214,13 +177,13 @@ void CellBlock::addParticles(const std::vector<Particle> &particles, const MeshP
             iz < 0 || iz >= params.size[2]) {
             continue;
         }
-        in_particles[ddl::ArrayIndex<3> {
-                static_cast<size_t>(ix + params.shadow_start[0]),
-                static_cast<size_t>(iy + params.shadow_start[1]),
-                static_cast<size_t>(iz + params.shadow_start[2])}].push_back(particle);
+        in_particles[Index3 {
+                ix + params.shadow_start[0],
+                iy + params.shadow_start[1],
+                iz + params.shadow_start[2]}].push_back(particle);
     }
     for (const auto &p: in_particles) {
-        cells[p.first].addParticles(p.second);
+        cellAt(p.first).addParticles(p.second);
     }
 }
 

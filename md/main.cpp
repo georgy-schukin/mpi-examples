@@ -1,3 +1,5 @@
+#include <mpi.h>
+
 #include "mesh3d.h"
 #include "md.h"
 #include "output.h"
@@ -11,10 +13,6 @@
 #include <stdexcept>
 #include <fstream>
 #include <cmath>
-
-double slice_get_time = 0;
-double slice_set_time = 0;
-double wait_time = 0;
 
 int intArg(int arg_num, int default_value, int argc, char **argv) {
     return (argc > arg_num ? std::stoi(argv[arg_num]) : default_value);
@@ -44,27 +42,6 @@ Index3 getBlockIndex(const Vector3 &pos, const MeshParams &mesh_params, const Me
         index[i] = mesh_decomp.blockIndex(static_cast<int>(i), cell_index);
     }
     return index;
-}
-
-void calcForces(Mesh3D &mesh, const MDParams &md_params, const NeighborIndices &neigh_indices) {
-    for (auto &p: mesh.localContents()) {
-        auto &block = *(p.second.get());
-        calcForcesBlock(block, md_params, neigh_indices);
-    }
-}
-
-void updatePositions(Mesh3D &mesh, const MDParams &md_params) {
-    for (auto &p: mesh.localContents()) {
-        auto &block = *(p.second.get());
-        updatePositionsBlock(block, md_params.delta_t);
-    }
-}
-
-void updateVelocities(Mesh3D &mesh, const MDParams &md_params) {
-    for (auto &p: mesh.localContents()) {
-        auto &block = *(p.second.get());
-        updateVelocitiesBlock(block, md_params.delta_t);
-    }
 }
 
 void distributeParticles(Mesh3D &mesh, const std::vector<Particle> &particles, const MeshParams &mesh_params,
@@ -125,18 +102,6 @@ void moveParticles(Mesh3D &mesh, const MeshParams &mesh_params,
     }
 
     distributeParticles(mesh, moved_particles, mesh_params, decomp, block_distr);
-}
-
-int numOfParticles(Mesh3D &mesh) {
-    int num = 0;
-    for (const auto &p: mesh.localContents()) {
-        num += p.second->getNumOfParticles();
-    }
-    return num;
-}
-
-int numOfBlocks(Mesh3D &mesh) {
-    return mesh.localContents().size();
 }
 
 enum Dimension {
@@ -275,42 +240,29 @@ void updateShadows(Mesh3D &mesh, const std::map<Index3, int> &block_distr,
     }
 }
 
-template <typename Proc, typename... Args>
-double timed(Proc proc, Args&&... args) {
-    ddl::Timer timer;
-    proc(std::forward<Args>(args)...);
-    return timer.time();
-}
-
 int main(int argc, char **argv) {
-
-    ddl::Environment env(&argc, &argv);
 
     int size_x = intArg(1, 100, argc, argv);
     int size_y = intArg(2, 100, argc, argv);
     int size_z = intArg(3, 100, argc, argv);
-    int num_of_fragments_x = intArg(4, 10, argc, argv);
-    int num_of_fragments_y = intArg(5, 10, argc, argv);
-    int num_of_fragments_z = intArg(6, 10, argc, argv);
-    int num_of_particles = intArg(7, 1000, argc, argv);
-    int num_of_iters = intArg(8, 100, argc, argv);
-    int nodes_by_x = intArg(9, 0, argc, argv);
-    int nodes_by_y = intArg(10, 0, argc, argv);
-    int nodes_by_z = intArg(11, 0, argc, argv);
-    const bool scale_size = intArg(12, 0, argc, argv);
-    const bool scale_fragments = intArg(13, 0, argc, argv);
-    const bool debug = intArg(14, 0, argc, argv);
+    int num_of_particles = intArg(4, 1000, argc, argv);
+    int num_of_iters = intArg(5, 100, argc, argv);
+    //const bool scale_size = intArg(12, 0, argc, argv);
+    //const bool scale_fragments = intArg(13, 0, argc, argv);
+    //const bool debug = intArg(14, 0, argc, argv);
 
-    const int my_rank = env.thisNode().rank();
-    const int num_of_nodes = env.allNodes().size();
+    int rank, size;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &size);
 
-    std::tie(nodes_by_x, nodes_by_y, nodes_by_z) = ddl::Lattice::getLatticeSides3D(num_of_nodes, nodes_by_x, nodes_by_y, nodes_by_z);
+    MPI_Comm cart_comm;
 
-    if (nodes_by_x <=0 || nodes_by_y <= 0 || nodes_by_z <= 0 || nodes_by_x * nodes_by_y * nodes_by_z != num_of_nodes) {
-        throw std::runtime_error("Incorrect grid sizes!");
-    }
+    int dims[3] = {0, 0, 0};
+    MPI_Dims_create(size, 3, dims);
+    int periods[3] = {0, 0, 0};
+    MPI_Cart_create(MPI_COMM_WORLD, 3, dims, periods, 0, &cart_comm);
 
-    // Size scaling mode: mesh size denotes mesh block size for each node.
+    /*// Size scaling mode: mesh size denotes mesh block size for each node.
     // Scale global mesh size appropriately.
     if (scale_size) {
         size_x *= nodes_by_x;
@@ -324,7 +276,7 @@ int main(int argc, char **argv) {
         num_of_fragments_x *= nodes_by_x;
         num_of_fragments_y *= nodes_by_y;
         num_of_fragments_z *= nodes_by_z;
-    }
+    }*/
 
     MDParams md_params;
     md_params.epsilon = 5.0;
@@ -340,9 +292,9 @@ int main(int argc, char **argv) {
     mesh_params.mesh_size[0] = size_x;
     mesh_params.mesh_size[1] = size_y;
     mesh_params.mesh_size[2] = size_z;
-    mesh_params.num_blocks[0] = num_of_fragments_x;
-    mesh_params.num_blocks[1] = num_of_fragments_y;
-    mesh_params.num_blocks[2] = num_of_fragments_z;
+    mesh_params.num_blocks[0] = dims[0];
+    mesh_params.num_blocks[1] = dims[1];
+    mesh_params.num_blocks[2] = dims[2];
     mesh_params.origin[0] = 0.0;
     mesh_params.origin[1] = 0.0;
     mesh_params.origin[2] = 0.0;
@@ -360,45 +312,22 @@ int main(int argc, char **argv) {
                                   {mesh_params.mesh_size[1], mesh_params.num_blocks[1]},
                                   {mesh_params.mesh_size[2], mesh_params.num_blocks[2]}};
 
-    MeshDistribution mesh_distr {{mesh_params.num_blocks[0], nodes_by_x},
-                                 {mesh_params.num_blocks[1], nodes_by_y},
-                                 {mesh_params.num_blocks[2], nodes_by_z}};
-
-    BlockMap distribution;
-
-    for (int i = 0; i < mesh_params.num_blocks[0]; i++) {
-        for (int j = 0; j < mesh_params.num_blocks[1]; j++) {
-            for (int k = 0; k < mesh_params.num_blocks[2]; k++) {
-                Index3 index {i, j, k};
-                const auto ni = mesh_distr.nodeIndex(index);
-                const auto node = toRank(ni, mesh_distr);
-                distribution[index] = node;
-            }
-        }
+    CellBlockParams block_params;
+    for (size_t i = 0; i < 3; i++) {
+        block_params.size[i] = mesh_decomp.blockSize(static_cast<int>(i), index[i]);
+        block_params.shift[i] = mesh_decomp.blockShift(static_cast<int>(i), index[i]);
+        block_params.shadow_start[i] = mesh_params.periodic[i] ? 1 : (index[i] > 0 ? 1 : 0);
+        block_params.shadow_end[i] = mesh_params.periodic[i] ? 1 : (index[i] < mesh_params.num_blocks[i] - 1 ? 1 : 0);
+        block_params.full_size[i] = block_params.size[i] + block_params.shadow_start[i] + block_params.shadow_end[i];
     }
+    block_params.neighbor_indices_type = NeighborIndices::getType(
+                block_params.shadow_start[0], block_params.shadow_end[0],
+                block_params.shadow_start[1], block_params.shadow_end[1],
+                block_params.shadow_start[2], block_params.shadow_end[2]);
 
-    Mesh3D mesh(&env);
-
-    NeighborIndices neighbor_indices;
-
-    for (const auto &p: distribution) {
-        const auto &index = p.first;
-        if (p.second == my_rank) {
-            CellBlockParams b_params;
-            for (size_t i = 0; i < 3; i++) {
-                b_params.size[i] = mesh_decomp.blockSize(static_cast<int>(i), index[i]);
-                b_params.shift[i] = mesh_decomp.blockShift(static_cast<int>(i), index[i]);
-                b_params.shadow_start[i] = mesh_params.periodic[i] ? 1 : (index[i] > 0 ? 1 : 0);
-                b_params.shadow_end[i] = mesh_params.periodic[i] ? 1 : (index[i] < mesh_params.num_blocks[i] - 1 ? 1 : 0);
-                b_params.full_size[i] = b_params.size[i] + b_params.shadow_start[i] + b_params.shadow_end[i];
-            }
-            b_params.neighbor_indices_type = NeighborIndices::getType(
-                        b_params.shadow_start[0], b_params.shadow_end[0],
-                        b_params.shadow_start[1], b_params.shadow_end[1],
-                        b_params.shadow_start[2], b_params.shadow_end[2]);
-            mesh.create(index, CellBlock(b_params));
-        }
-    }
+    CellBlock block(block_params);
+    //auto transfer_input = getBlockTransferInputs()
+    NeighborIndices neigh_indices;
 
     std::map<Index3, std::map<Index3, TransferInput>> block_transfer_inputs;
 
@@ -408,7 +337,7 @@ int main(int argc, char **argv) {
         block_transfer_inputs[index] = getBlockTransferInputs(index, params, neighbor_indices, mesh_params);
     }
 
-    env.getCommService()->getCommunicator()->barrier();
+    MPI_Barrier(cart_comm);
 
     initParticles([&](){
         return initParticles(num_of_particles, md_params, mesh_params);
@@ -426,49 +355,40 @@ int main(int argc, char **argv) {
     double update_vel_time = 0;
     double move_particles_time = 0;
 
-    ddl::Timer total_timer;
+    const auto t_start = MPI_Wtime();
 
     update_shadows_time += timed(updateShadows, mesh, distribution, block_transfer_inputs);
-    calc_forces_time += timed(calcForces, mesh, md_params, neighbor_indices);
 
-    env.getCommService()->getCommunicator()->barrier();
+    calcForcesBlock(block, md_params, neigh_indices);
+
+    MPI_Barrier(cart_comm);
 
     for (int iter = 1; iter <= num_of_iters; iter++) {
-        if (debug) {
-            std::ostringstream out;
-            out << my_rank <<
-                   ": iter " << iter <<
-                   ", blocks: " << numOfBlocks(mesh)  <<
-                   ", particles: " << numOfParticles(mesh) <<
-                   std::endl;
-            std::cout << out.str();
-        }
+        updatePositionsBlock(block, md_params.delta_t);
 
-        update_pos_time += timed(updatePositions, mesh, md_params);
-
-        env.getCommService()->getCommunicator()->barrier();
+        //env.getCommService()->getCommunicator()->barrier();
 
         move_particles_time += timed(moveParticles, mesh, mesh_params, mesh_decomp, distribution);
 
-        env.getCommService()->getCommunicator()->barrier();
+        //env.getCommService()->getCommunicator()->barrier();
 
         update_shadows_time += timed(updateShadows, mesh, distribution, block_transfer_inputs);
 
-        env.getCommService()->getCommunicator()->barrier();
+        //env.getCommService()->getCommunicator()->barrier();
 
-        calc_forces_time += timed(calcForces, mesh, md_params, neighbor_indices);
-        update_vel_time += timed(updateVelocities, mesh, md_params);
+        calcForcesBlock(block, md_params, neigh_indices);
+        updateVelocitiesBlock(block, md_params.delta_t);
 
         if (do_output && (iter % md_params.output_step == 0)) {
-            outputVTKNode(md_params.output, iter, my_rank, num_of_nodes, mesh);
+            outputVTKNode(md_params.output, iter, rank, size, block);
         }
     }
 
-    env.getCommService()->getCommunicator()->barrier();
+    MPI_Barrier(cart_comm);
 
-    const auto own_time = calc_forces_time + move_particles_time + update_shadows_time +
-            update_pos_time + update_vel_time;
-    const auto time = total_timer.time();
+    const auto t_end = MPI_Wtime();
+
+    const auto time = t_end - t_start;
 
     /*if (do_output) {
         outputVTKSeries(md_params.output, num_of_iters + 1, md_params);
@@ -476,26 +396,15 @@ int main(int argc, char **argv) {
 
     std::ostringstream out;
 
-    if (my_rank == 0) {
+    if (rank == 0) {
         out << "Mesh: " << mesh_params.mesh_size[0] << " x " << mesh_params.mesh_size[1] << " x " << mesh_params.mesh_size[2] <<
                ", fragments: " << mesh_params.num_blocks[0] << " x " << mesh_params.num_blocks[1] << " x " << mesh_params.num_blocks[2] <<
-               ", grid: " << nodes_by_x << " x " << nodes_by_y << " x " << nodes_by_z <<
+               ", grid: " << dims[0] << " x " << dims[1] << " x " << dims[2] <<
                ", particles: " << num_of_particles <<
                ", iters: " << num_of_iters <<
                ", time: " << time <<
                std::endl;
     }
-    out << "[Node " << my_rank << "]: own time: " << own_time <<
-           ", calc forces time: " << calc_forces_time <<
-           ", move particles time: " << move_particles_time <<
-           ", update shadows time: " << update_shadows_time <<
-           ", slice get time: " << slice_get_time <<
-           ", slice set time: " << slice_set_time <<
-           ", update pos time: " << update_pos_time <<
-           ", update velocity time: " << update_vel_time <<
-           ", wait time: " << wait_time <<
-           std::endl;
-
     std::cout << out.str();
 
     return 0;
